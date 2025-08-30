@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
-from scipy.signal import spectrogram
+from scipy.signal import spectrogram, stft, istft
 from scipy.io.wavfile import write
 from datetime import datetime
 
@@ -11,33 +11,28 @@ def record_audio(duration_ms, samplerate=44100):
     duration_s = duration_ms / 1000.0
     print(f"Recording {duration_s} seconds of audio...")
     audio = sd.rec(int(samplerate * duration_s), samplerate=samplerate, channels=1, dtype='float32')
-    sd.wait()  # Wait until recording is finished
+    sd.wait()
     return audio.flatten(), samplerate
 
 
-def save_wav(audio, samplerate):
+def save_wav(audio, samplerate, suffix=""):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"recording_{timestamp}.wav"
-    # Scale float32 to int16 for WAV format
+    filename = f"recording_{timestamp}{suffix}.wav"
     audio_int16 = np.int16(audio / np.max(np.abs(audio)) * 32767)
     write(filename, samplerate, audio_int16)
     print(f"Audio saved to {filename}")
+    return filename
 
 
 def plot_waterfall(audio, samplerate, num_columns, log_scale, fmin, fmax):
-    # Compute spectrogram
     f, t, Sxx = spectrogram(audio, samplerate, nperseg=1024, noverlap=512)
-
-    # Apply frequency limits
     freq_mask = (f >= fmin) & (f <= fmax)
     f = f[freq_mask]
     Sxx = Sxx[freq_mask, :]
 
-    # Partition time axis into num_columns bins
     num_time_bins = len(t)
     bins_per_col = num_time_bins // num_columns
 
-    # Average spectrogram over partitions
     partitioned_spectrogram = []
     partitioned_times = []
     for i in range(num_columns):
@@ -48,11 +43,9 @@ def plot_waterfall(audio, samplerate, num_columns, log_scale, fmin, fmax):
 
     partitioned_spectrogram = np.array(partitioned_spectrogram).T
 
-    # Apply log scale if requested
     if log_scale:
         partitioned_spectrogram = 10 * np.log10(partitioned_spectrogram + 1e-12)
 
-    # Plot waterfall spectrogram
     plt.figure(figsize=(10, 6))
     plt.imshow(partitioned_spectrogram,
                aspect='auto',
@@ -66,6 +59,17 @@ def plot_waterfall(audio, samplerate, num_columns, log_scale, fmin, fmax):
     plt.show()
 
 
+def remove_phase_and_reconstruct(audio, samplerate):
+    # STFT
+    f, t, Zxx = stft(audio, fs=samplerate, nperseg=1024, noverlap=512)
+    # Remove phase (keep magnitude only)
+    magnitude = np.abs(Zxx)
+    Zxx_no_phase = magnitude  # real and nonnegative
+    # Inverse STFT
+    _, reconstructed = istft(Zxx_no_phase, fs=samplerate, nperseg=1024, noverlap=512)
+    return reconstructed
+
+
 def main():
     parser = argparse.ArgumentParser(description="Waterfall Spectrogram from Microphone Recording")
     parser.add_argument("--duration-ms", type=int, default=1000, help="Recording duration in milliseconds")
@@ -76,7 +80,11 @@ def main():
     args = parser.parse_args()
 
     audio, samplerate = record_audio(args.duration_ms)
-    save_wav(audio, samplerate)
+    save_wav(audio, samplerate)  # original
+
+    reconstructed = remove_phase_and_reconstruct(audio, samplerate)
+    save_wav(reconstructed, samplerate, suffix="_no_phase")  # reconstructed
+
     plot_waterfall(audio, samplerate, args.num_columns, args.log, args.min, args.max)
 
 
