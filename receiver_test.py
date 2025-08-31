@@ -3,22 +3,24 @@ import json
 import argparse
 import numpy as np
 
+# Predefined cell size (same for all cells)
+CELL_W = 12
+CELL_H = 12
+
 def main():
-    parser = argparse.ArgumentParser(description="Camera cell viewer with exposure control")
-    parser.add_argument("--json", required=True, help="Path to JSON file with cell definitions")
+    parser = argparse.ArgumentParser(description="Camera grid cell viewer with exposure control")
+    parser.add_argument("--json", required=True, help="Path to JSON file with center points")
     parser.add_argument("--exposure", type=float, default=None, help="Exposure value to set on camera")
     args = parser.parse_args()
 
-    # Load cell definitions
+    # Load list of center positions
     with open(args.json, "r") as f:
-        cells = json.load(f)  # [{"lt": [x1,y1], "rb": [x2,y2]}, ...]
+        centers = json.load(f)  # [{"cx": x, "cy": y}, ...]
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: Cannot open camera")
         return
-
-    print("FPS reported:", cap.get(cv2.CAP_PROP_FPS))
 
     if args.exposure is not None:
         cap.set(cv2.CAP_PROP_EXPOSURE, args.exposure)
@@ -32,23 +34,25 @@ def main():
         h, w = frame.shape[:2]
         stats = []
 
-        for i, cell in enumerate(cells):
-            x1, y1 = cell["lt"]
-            x2, y2 = cell["rb"]
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(w - 1, x2), min(h - 1, y2)
+        for i, c in enumerate(centers):
+            cx, cy = c["cx"], c["cy"]
+            x1 = max(0, cx - CELL_W // 2)
+            x2 = min(w - 1, cx + CELL_W // 2)
+            y1 = max(0, cy - CELL_H // 2)
+            y2 = min(h - 1, cy + CELL_H // 2)
 
             roi = frame[y1:y2, x1:x2]
             if roi.size == 0:
                 continue
 
             med = np.median(roi.reshape(-1, 3), axis=0).astype(int)
-            r, g, b = med[2], med[1], med[0]  # OpenCV BGR→RGB
+            r, g, b = med[2], med[1], med[0]
             stats.append((i, r, g, b))
 
-            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 1)
+            cv2.circle(display, (cx, cy), 2, (0, 0, 255), -1)
 
-        # Create side panel
+        # Side panel for stats
         panel_w = 250
         panel = np.zeros((h, panel_w, 3), dtype=np.uint8)
         y = 20
@@ -58,10 +62,8 @@ def main():
                         0.5, (0, 255, 0), 1, cv2.LINE_AA)
             y += 20
 
-        # Concatenate original and panel
         combined = np.hstack((display, panel))
-
-        cv2.imshow("Camera Cells with Stats", combined)
+        cv2.imshow("Camera Grid Cells", combined)
 
         if cv2.waitKey(1) & 0xFF == 27:  # ESC
             break
